@@ -1,5 +1,6 @@
 -- Blox Fruits - Smart Weapon Equip (Auto Detect by Type)
 -- Tự nhận biết Gun / Melee / Fruit / Sword trong Backpack
+-- + Auto Save/Load Config vào file workspace executor
 
 ------------------------------------------------
 -- SERVICES
@@ -9,8 +10,35 @@ local RunService = game:GetService("RunService")
 local LP         = Players.LocalPlayer
 
 ------------------------------------------------
+-- CONFIG FILE (Delta executor dùng writefile/readfile)
+------------------------------------------------
+local CONFIG_PATH = "BFWeaponEquip_Config.json"
+
+local function saveConfig()
+    local data = {
+        targetType = targetType or "",
+        running    = running or false,
+    }
+    local ok = pcall(function()
+        writefile(CONFIG_PATH, game:GetService("HttpService"):JSONEncode(data))
+    end)
+    if ok then
+        print("[BF Weapon] Config đã lưu:", CONFIG_PATH)
+    end
+end
+
+local function loadConfig()
+    local ok, raw = pcall(readfile, CONFIG_PATH)
+    if not ok or not raw or raw == "" then return nil end
+    local ok2, data = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(raw)
+    end)
+    if ok2 and data then return data end
+    return nil
+end
+
+------------------------------------------------
 -- WEAPON TYPE KEYWORDS
--- Dùng để nhận biết tool thuộc loại nào
 ------------------------------------------------
 local WeaponKeywords = {
     Melee = {
@@ -33,7 +61,6 @@ local WeaponKeywords = {
     },
     Fruit = {
         "fruit","devil","logia","paramecia","zoan",
-        -- Tên các fruit phổ biến
         "flame","ice","quake","light","dark","rubber","string",
         "magnet","smoke","sand","diamond","door","phoenix","leopard",
         "buddha","love","spider","gravity","kilo","bomb","spike",
@@ -45,22 +72,18 @@ local WeaponKeywords = {
 }
 
 ------------------------------------------------
--- Nhận dạng loại weapon của 1 tool
+-- Nhận dạng loại weapon
 ------------------------------------------------
 local function getWeaponType(tool)
     if not tool or not tool:IsA("Tool") then return nil end
     local name = tool.Name:lower()
 
-    -- Ưu tiên kiểm tra Fruit trước (vì fruit có thể tên bất kỳ)
-    -- Blox Fruits: fruit tool thường có attribute hoặc tag đặc biệt
-    -- Kiểm tra tag
     local hasFruitTag = false
     pcall(function()
         hasFruitTag = tool:HasTag("Fruit") or tool:HasTag("DevilFruit")
     end)
     if hasFruitTag then return "Fruit" end
 
-    -- Kiểm tra attribute
     local typeAttr = tool:GetAttribute("WeaponType")
         or tool:GetAttribute("Type")
         or tool:GetAttribute("ToolType")
@@ -72,7 +95,6 @@ local function getWeaponType(tool)
         if t:find("melee") or t:find("fist")  then return "Melee" end
     end
 
-    -- Kiểm tra theo keywords tên tool
     for wtype, keywords in pairs(WeaponKeywords) do
         for _, kw in ipairs(keywords) do
             if name:find(kw, 1, true) then
@@ -81,46 +103,35 @@ local function getWeaponType(tool)
         end
     end
 
-    -- Kiểm tra children của tool để đoán loại
-    -- Fruit thường có folder "Skills" hoặc "Moves"
     if tool:FindFirstChild("Skills") or tool:FindFirstChild("Moves")
     or tool:FindFirstChild("FruitData") then
         return "Fruit"
-    end
-
-    return nil -- Không xác định được
-end
-
-------------------------------------------------
--- Lấy tool theo loại từ Backpack + Character
-------------------------------------------------
-local function findWeaponByType(targetType)
-    local char = LP.Character
-    local bp   = LP.Backpack
-    if not char or not bp then return nil end
-
-    -- Tìm trong Backpack
-    for _, tool in ipairs(bp:GetChildren()) do
-        if tool:IsA("Tool") then
-            local wtype = getWeaponType(tool)
-            if wtype == targetType then return tool end
-        end
-    end
-
-    -- Tìm trong Character (đang cầm)
-    for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") then
-            local wtype = getWeaponType(tool)
-            if wtype == targetType then return tool end
-        end
     end
 
     return nil
 end
 
 ------------------------------------------------
--- Kiểm tra đang cầm đúng loại chưa
+-- Tìm weapon theo loại
 ------------------------------------------------
+local function findWeaponByType(targetType)
+    local char = LP.Character
+    local bp   = LP.Backpack
+    if not char or not bp then return nil end
+
+    for _, tool in ipairs(bp:GetChildren()) do
+        if tool:IsA("Tool") then
+            if getWeaponType(tool) == targetType then return tool end
+        end
+    end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") then
+            if getWeaponType(tool) == targetType then return tool end
+        end
+    end
+    return nil
+end
+
 local function isEquipped(targetType)
     local char = LP.Character
     if not char then return false end
@@ -129,9 +140,6 @@ local function isEquipped(targetType)
     return getWeaponType(tool) == targetType
 end
 
-------------------------------------------------
--- Equip tool
-------------------------------------------------
 local function equipTool(tool)
     local char = LP.Character
     if not char then return false end
@@ -144,10 +152,13 @@ end
 ------------------------------------------------
 -- MAIN STATE
 ------------------------------------------------
-local targetType  = nil  -- "Gun" | "Melee" | "Fruit" | "Sword"
+local targetType  = nil
 local running     = false
 local destroyed   = false
 local loopConn    = nil
+
+-- Forward declare để saveConfig dùng được
+-- (Lua không cần forward declare với upvalue, chỉ cần đảm bảo thứ tự)
 
 local function startLoop()
     if loopConn then loopConn:Disconnect() end
@@ -158,19 +169,16 @@ local function startLoop()
         local now = tick()
         if now - lastCheck < 0.4 then return end
         lastCheck = now
-
         if not isEquipped(targetType) then
             local tool = findWeaponByType(targetType)
-            if tool then
-                equipTool(tool)
-            end
+            if tool then equipTool(tool) end
         end
     end)
 end
 
 LP.CharacterAdded:Connect(function()
     task.wait(1.2)
-    -- Sau respawn: giữ nguyên targetType và tự equip lại
+    -- Sau respawn giữ nguyên targetType, loop tự xử lý
 end)
 
 ------------------------------------------------
@@ -191,7 +199,7 @@ end
 
 -- Panel
 local panel = Instance.new("Frame", gui)
-panel.Size=UDim2.new(0,230,0,220)
+panel.Size=UDim2.new(0,230,0,248)
 panel.Position=UDim2.new(0,12,0.35,0)
 panel.BackgroundColor3=Color3.fromRGB(10,10,18)
 panel.BackgroundTransparency=0.05
@@ -248,6 +256,7 @@ toggleBtn.Font=Enum.Font.GothamBold; mkCorner(toggleBtn,8)
 toggleBtn.MouseButton1Click:Connect(function()
     if not targetType then return end
     running = not running
+    saveConfig() -- Lưu khi toggle
     if running then
         toggleBtn.Text="▶  Đang giữ: "..targetType
         toggleBtn.BackgroundColor3=Color3.fromRGB(0,180,70)
@@ -276,6 +285,10 @@ grid.CellSize=UDim2.new(0.5,-3,0.5,-3)
 grid.CellPadding=UDim2.new(0,4,0,4)
 
 local wBtns = {}
+
+-- Khai báo applyConfig trước để dùng bên dưới
+local applyConfig
+
 for _, wdata in ipairs(weaponTypes) do
     local wb=Instance.new("TextButton",btnGrid)
     wb.BackgroundColor3=Color3.fromRGB(25,25,38)
@@ -284,7 +297,6 @@ for _, wdata in ipairs(weaponTypes) do
     mkCorner(wb,8)
     wBtns[wdata.type]=wb
 
-    -- Check apakah ada di backpack
     task.spawn(function()
         task.wait(0.5)
         local found = findWeaponByType(wdata.type)
@@ -305,7 +317,6 @@ for _, wdata in ipairs(weaponTypes) do
             return
         end
 
-        -- Bỏ chọn màu cũ
         for _, b in pairs(wBtns) do
             b.BackgroundColor3=Color3.fromRGB(25,25,38)
         end
@@ -314,6 +325,7 @@ for _, wdata in ipairs(weaponTypes) do
         wb.BackgroundColor3 = wdata.color
         running = true
         startLoop()
+        saveConfig() -- Lưu ngay khi chọn weapon
 
         toggleBtn.Text="▶  Đang giữ: "..targetType
         toggleBtn.BackgroundColor3=Color3.fromRGB(0,180,70)
@@ -323,19 +335,128 @@ for _, wdata in ipairs(weaponTypes) do
     end)
 end
 
+------------------------------------------------
+-- Save indicator label
+------------------------------------------------
+local saveLbl=Instance.new("TextLabel",panel)
+saveLbl.Size=UDim2.new(1,-12,0,16); saveLbl.Position=UDim2.new(0,6,0,214)
+saveLbl.BackgroundTransparency=1
+saveLbl.Text="💾 Config: chưa lưu"
+saveLbl.TextColor3=Color3.fromRGB(90,90,110); saveLbl.TextScaled=true
+saveLbl.Font=Enum.Font.Gotham
+
 -- Info label
 local infoLbl=Instance.new("TextLabel",panel)
-infoLbl.Size=UDim2.new(1,-12,0,18); infoLbl.Position=UDim2.new(0,6,0,214)
+infoLbl.Size=UDim2.new(1,-12,0,14); infoLbl.Position=UDim2.new(0,6,0,232)
 infoLbl.BackgroundTransparency=1
 infoLbl.Text="Tự nhận dạng weapon qua tên tool"
-infoLbl.TextColor3=Color3.fromRGB(90,90,110); infoLbl.TextScaled=true
+infoLbl.TextColor3=Color3.fromRGB(70,70,90); infoLbl.TextScaled=true
 infoLbl.Font=Enum.Font.Gotham
 
--- Status updater
+------------------------------------------------
+-- Override saveConfig để cập nhật label
+------------------------------------------------
+saveConfig = function()
+    local data = {
+        targetType = targetType or "",
+        running    = running or false,
+    }
+    local ok = pcall(function()
+        writefile(CONFIG_PATH, game:GetService("HttpService"):JSONEncode(data))
+    end)
+    if ok then
+        saveLbl.Text="💾 Đã lưu: "..(targetType or "?").." | "..(running and "ON" or "OFF")
+        saveLbl.TextColor3=Color3.fromRGB(100,220,100)
+    else
+        saveLbl.Text="⚠ Lưu thất bại (executor không hỗ trợ?)"
+        saveLbl.TextColor3=Color3.fromRGB(255,100,100)
+    end
+end
+
+------------------------------------------------
+-- applyConfig: Áp dụng config lên GUI + state
+------------------------------------------------
+applyConfig = function(data)
+    if not data then return end
+    local t = data.targetType
+    local r = data.running
+
+    if t and t ~= "" then
+        -- Tìm wdata tương ứng
+        local wdata_found = nil
+        for _, wdata in ipairs(weaponTypes) do
+            if wdata.type == t then wdata_found = wdata break end
+        end
+
+        if wdata_found then
+            -- Reset màu nút
+            for _, b in pairs(wBtns) do
+                b.BackgroundColor3=Color3.fromRGB(25,25,38)
+            end
+
+            targetType = t
+            local wb = wBtns[t]
+            if wb then wb.BackgroundColor3 = wdata_found.color end
+
+            if r then
+                running = true
+                startLoop()
+                toggleBtn.Text="▶  Đang giữ: "..targetType
+                toggleBtn.BackgroundColor3=Color3.fromRGB(0,180,70)
+                toggleBtn.TextColor3=Color3.fromRGB(255,255,255)
+                statusLbl.Text="🔄 Đã khôi phục từ config: "..targetType
+                statusLbl.TextColor3=Color3.fromRGB(140,255,140)
+            else
+                running = false
+                toggleBtn.Text="⏸  Tạm dừng: "..targetType
+                toggleBtn.BackgroundColor3=Color3.fromRGB(160,100,0)
+                toggleBtn.TextColor3=Color3.fromRGB(255,230,150)
+                statusLbl.Text="⏸ Đã khôi phục (tạm dừng): "..targetType
+                statusLbl.TextColor3=Color3.fromRGB(200,160,60)
+            end
+
+            saveLbl.Text="💾 Config: "..t.." | "..(r and "ON" or "OFF")
+            saveLbl.TextColor3=Color3.fromRGB(100,200,255)
+            print("[BF Weapon] Config khôi phục: type="..t.." running="..tostring(r))
+        end
+    end
+end
+
+------------------------------------------------
+-- AUTO LOAD CONFIG sau 5 giây
+------------------------------------------------
+task.spawn(function()
+    statusLbl.Text="⏳ Chờ 5s để tải config..."
+    statusLbl.TextColor3=Color3.fromRGB(200,200,100)
+
+    -- Đếm ngược hiển thị
+    for i = 5, 1, -1 do
+        if destroyed then return end
+        saveLbl.Text="⏳ Tải config sau "..i.."s..."
+        saveLbl.TextColor3=Color3.fromRGB(200,200,80)
+        task.wait(1)
+    end
+
+    if destroyed then return end
+
+    local data = loadConfig()
+    if data and data.targetType and data.targetType ~= "" then
+        applyConfig(data)
+    else
+        statusLbl.Text="Chọn vũ khí bên dưới"
+        statusLbl.TextColor3=Color3.fromRGB(180,180,200)
+        saveLbl.Text="💾 Chưa có config"
+        saveLbl.TextColor3=Color3.fromRGB(90,90,110)
+        print("[BF Weapon] Không tìm thấy config, chờ người dùng chọn.")
+    end
+end)
+
+------------------------------------------------
+-- Status updater loop
+------------------------------------------------
 task.spawn(function()
     while not destroyed do
         task.wait(0.8)
-        -- Cập nhật tên tool trong các nút
         for _, wdata in ipairs(weaponTypes) do
             local wb = wBtns[wdata.type]
             if wb then
@@ -352,7 +473,6 @@ task.spawn(function()
             end
         end
 
-        -- Cập nhật status chính
         if running and targetType then
             if isEquipped(targetType) then
                 local tool = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
@@ -370,4 +490,4 @@ task.spawn(function()
 end)
 
 startLoop()
-print("[BF Weapon] Loaded! Tự nhận dạng Gun/Melee/Fruit/Sword")
+print("[BF Weapon] Loaded! Config path: "..CONFIG_PATH)
