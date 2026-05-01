@@ -1,0 +1,373 @@
+-- Blox Fruits - Smart Weapon Equip (Auto Detect by Type)
+-- Tự nhận biết Gun / Melee / Fruit / Sword trong Backpack
+
+------------------------------------------------
+-- SERVICES
+------------------------------------------------
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local LP         = Players.LocalPlayer
+
+------------------------------------------------
+-- WEAPON TYPE KEYWORDS
+-- Dùng để nhận biết tool thuộc loại nào
+------------------------------------------------
+local WeaponKeywords = {
+    Melee = {
+        "melee","fist","knuckle","superhuman","darkstep","electro",
+        "waterlua","sharkman","dragon talon","death step","electric claw",
+        "godhuman","sanguine art","spider","black leg","kabucha",
+    },
+    Sword = {
+        "sword","blade","katana","saber","cutlass","dual","yama",
+        "dark blade","true triple katana","pole","bisento","trident",
+        "shark","rengoku","buddha","shisui","cursed dual katana",
+        "canvander","serpent bow","gravity","soul","jitte","koko",
+        "midnight blade","hallow scythe","tushita","enma","saddi",
+        "wando","shisui","idk","dragon","saber","light sword",
+    },
+    Gun = {
+        "gun","pistol","rifle","cannon","musket","flintlock","slingshot",
+        "acidum rifle","refined flintlock","refined musket","the one",
+        "kabucha","bizarre rifle","revolver","bazooka","sniper",
+    },
+    Fruit = {
+        "fruit","devil","logia","paramecia","zoan",
+        -- Tên các fruit phổ biến
+        "flame","ice","quake","light","dark","rubber","string",
+        "magnet","smoke","sand","diamond","door","phoenix","leopard",
+        "buddha","love","spider","gravity","kilo","bomb","spike",
+        "spin","chop","float","gas","rumble","snow","dough","shadow",
+        "venom","control","soul","pain","blizzard","mammoth","t-rex",
+        "dragon","leopard","kitsune","sound","leopard","ope","ope",
+        "paw","barrier","rocket","flare",
+    },
+}
+
+------------------------------------------------
+-- Nhận dạng loại weapon của 1 tool
+------------------------------------------------
+local function getWeaponType(tool)
+    if not tool or not tool:IsA("Tool") then return nil end
+    local name = tool.Name:lower()
+
+    -- Ưu tiên kiểm tra Fruit trước (vì fruit có thể tên bất kỳ)
+    -- Blox Fruits: fruit tool thường có attribute hoặc tag đặc biệt
+    -- Kiểm tra tag
+    local hasFruitTag = false
+    pcall(function()
+        hasFruitTag = tool:HasTag("Fruit") or tool:HasTag("DevilFruit")
+    end)
+    if hasFruitTag then return "Fruit" end
+
+    -- Kiểm tra attribute
+    local typeAttr = tool:GetAttribute("WeaponType")
+        or tool:GetAttribute("Type")
+        or tool:GetAttribute("ToolType")
+    if typeAttr then
+        local t = tostring(typeAttr):lower()
+        if t:find("fruit") or t:find("devil") then return "Fruit" end
+        if t:find("sword") or t:find("blade") then return "Sword" end
+        if t:find("gun")   or t:find("shoot") then return "Gun"   end
+        if t:find("melee") or t:find("fist")  then return "Melee" end
+    end
+
+    -- Kiểm tra theo keywords tên tool
+    for wtype, keywords in pairs(WeaponKeywords) do
+        for _, kw in ipairs(keywords) do
+            if name:find(kw, 1, true) then
+                return wtype
+            end
+        end
+    end
+
+    -- Kiểm tra children của tool để đoán loại
+    -- Fruit thường có folder "Skills" hoặc "Moves"
+    if tool:FindFirstChild("Skills") or tool:FindFirstChild("Moves")
+    or tool:FindFirstChild("FruitData") then
+        return "Fruit"
+    end
+
+    return nil -- Không xác định được
+end
+
+------------------------------------------------
+-- Lấy tool theo loại từ Backpack + Character
+------------------------------------------------
+local function findWeaponByType(targetType)
+    local char = LP.Character
+    local bp   = LP.Backpack
+    if not char or not bp then return nil end
+
+    -- Tìm trong Backpack
+    for _, tool in ipairs(bp:GetChildren()) do
+        if tool:IsA("Tool") then
+            local wtype = getWeaponType(tool)
+            if wtype == targetType then return tool end
+        end
+    end
+
+    -- Tìm trong Character (đang cầm)
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") then
+            local wtype = getWeaponType(tool)
+            if wtype == targetType then return tool end
+        end
+    end
+
+    return nil
+end
+
+------------------------------------------------
+-- Kiểm tra đang cầm đúng loại chưa
+------------------------------------------------
+local function isEquipped(targetType)
+    local char = LP.Character
+    if not char then return false end
+    local tool = char:FindFirstChildOfClass("Tool")
+    if not tool then return false end
+    return getWeaponType(tool) == targetType
+end
+
+------------------------------------------------
+-- Equip tool
+------------------------------------------------
+local function equipTool(tool)
+    local char = LP.Character
+    if not char then return false end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    local ok = pcall(function() hum:EquipTool(tool) end)
+    return ok
+end
+
+------------------------------------------------
+-- MAIN STATE
+------------------------------------------------
+local targetType  = nil  -- "Gun" | "Melee" | "Fruit" | "Sword"
+local running     = false
+local destroyed   = false
+local loopConn    = nil
+
+local function startLoop()
+    if loopConn then loopConn:Disconnect() end
+    local lastCheck = 0
+    loopConn = RunService.Heartbeat:Connect(function()
+        if destroyed then loopConn:Disconnect() return end
+        if not running or not targetType then return end
+        local now = tick()
+        if now - lastCheck < 0.4 then return end
+        lastCheck = now
+
+        if not isEquipped(targetType) then
+            local tool = findWeaponByType(targetType)
+            if tool then
+                equipTool(tool)
+            end
+        end
+    end)
+end
+
+LP.CharacterAdded:Connect(function()
+    task.wait(1.2)
+    -- Sau respawn: giữ nguyên targetType và tự equip lại
+end)
+
+------------------------------------------------
+-- GUI
+------------------------------------------------
+pcall(function()
+    local o = game.CoreGui:FindFirstChild("BFWeaponGui")
+    if o then o:Destroy() end
+end)
+
+local gui = Instance.new("ScreenGui")
+gui.Name="BFWeaponGui"; gui.ResetOnSpawn=false
+gui.IgnoreGuiInset=true; gui.Parent=game.CoreGui
+
+local function mkCorner(p,r)
+    Instance.new("UICorner",p).CornerRadius=UDim.new(0,r or 8)
+end
+
+-- Panel
+local panel = Instance.new("Frame", gui)
+panel.Size=UDim2.new(0,230,0,220)
+panel.Position=UDim2.new(0,12,0.35,0)
+panel.BackgroundColor3=Color3.fromRGB(10,10,18)
+panel.BackgroundTransparency=0.05
+panel.BorderSizePixel=0
+panel.Active=true; panel.Draggable=true
+mkCorner(panel,12)
+local ps=Instance.new("UIStroke",panel)
+ps.Color=Color3.fromRGB(255,200,0); ps.Thickness=1.5
+
+-- Header
+local header=Instance.new("Frame",panel)
+header.Size=UDim2.new(1,0,0,40)
+header.BackgroundColor3=Color3.fromRGB(30,20,5)
+header.BorderSizePixel=0; mkCorner(header,12)
+
+local titleLbl=Instance.new("TextLabel",header)
+titleLbl.Size=UDim2.new(1,-36,1,0); titleLbl.Position=UDim2.new(0,10,0,0)
+titleLbl.BackgroundTransparency=1; titleLbl.Text="⚔  Weapon Equip"
+titleLbl.TextColor3=Color3.fromRGB(255,215,0); titleLbl.TextScaled=true
+titleLbl.Font=Enum.Font.GothamBold
+titleLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+local exitBtn=Instance.new("TextButton",header)
+exitBtn.Size=UDim2.new(0,26,0,26); exitBtn.Position=UDim2.new(1,-30,0,7)
+exitBtn.BackgroundColor3=Color3.fromRGB(200,30,30); exitBtn.Text="✕"
+exitBtn.TextColor3=Color3.fromRGB(255,255,255); exitBtn.TextScaled=true
+exitBtn.Font=Enum.Font.GothamBold; mkCorner(exitBtn,6)
+exitBtn.MouseButton1Click:Connect(function()
+    destroyed=true; running=false
+    if loopConn then loopConn:Disconnect() end
+    gui:Destroy()
+end)
+
+-- Status bar
+local statusBar=Instance.new("Frame",panel)
+statusBar.Size=UDim2.new(1,-12,0,28); statusBar.Position=UDim2.new(0,6,0,46)
+statusBar.BackgroundColor3=Color3.fromRGB(18,18,28); statusBar.BorderSizePixel=0
+mkCorner(statusBar,7)
+
+local statusLbl=Instance.new("TextLabel",statusBar)
+statusLbl.Size=UDim2.new(1,-10,1,0); statusLbl.Position=UDim2.new(0,8,0,0)
+statusLbl.BackgroundTransparency=1; statusLbl.Text="Chọn vũ khí bên dưới"
+statusLbl.TextColor3=Color3.fromRGB(180,180,200); statusLbl.TextScaled=true
+statusLbl.Font=Enum.Font.Gotham
+statusLbl.TextXAlignment=Enum.TextXAlignment.Left
+
+-- Toggle ON/OFF
+local toggleBtn=Instance.new("TextButton",panel)
+toggleBtn.Size=UDim2.new(1,-12,0,30); toggleBtn.Position=UDim2.new(0,6,0,80)
+toggleBtn.BackgroundColor3=Color3.fromRGB(60,60,70); toggleBtn.Text="⏸  Chưa chọn vũ khí"
+toggleBtn.TextColor3=Color3.fromRGB(200,200,200); toggleBtn.TextScaled=true
+toggleBtn.Font=Enum.Font.GothamBold; mkCorner(toggleBtn,8)
+
+toggleBtn.MouseButton1Click:Connect(function()
+    if not targetType then return end
+    running = not running
+    if running then
+        toggleBtn.Text="▶  Đang giữ: "..targetType
+        toggleBtn.BackgroundColor3=Color3.fromRGB(0,180,70)
+        toggleBtn.TextColor3=Color3.fromRGB(255,255,255)
+        startLoop()
+    else
+        toggleBtn.Text="⏸  Tạm dừng: "..targetType
+        toggleBtn.BackgroundColor3=Color3.fromRGB(160,100,0)
+        toggleBtn.TextColor3=Color3.fromRGB(255,230,150)
+    end
+end)
+
+-- Weapon buttons 2x2
+local weaponTypes = {
+    { type="Melee", icon="👊", color=Color3.fromRGB(200,80,0)   },
+    { type="Sword",  icon="⚔", color=Color3.fromRGB(100,100,200)},
+    { type="Gun",    icon="🔫", color=Color3.fromRGB(0,150,150) },
+    { type="Fruit",  icon="🍎", color=Color3.fromRGB(180,0,180) },
+}
+
+local btnGrid=Instance.new("Frame",panel)
+btnGrid.Size=UDim2.new(1,-12,0,90); btnGrid.Position=UDim2.new(0,6,0,118)
+btnGrid.BackgroundTransparency=1; btnGrid.BorderSizePixel=0
+local grid=Instance.new("UIGridLayout",btnGrid)
+grid.CellSize=UDim2.new(0.5,-3,0.5,-3)
+grid.CellPadding=UDim2.new(0,4,0,4)
+
+local wBtns = {}
+for _, wdata in ipairs(weaponTypes) do
+    local wb=Instance.new("TextButton",btnGrid)
+    wb.BackgroundColor3=Color3.fromRGB(25,25,38)
+    wb.BorderSizePixel=0
+    wb.TextScaled=true; wb.Font=Enum.Font.GothamBold
+    mkCorner(wb,8)
+    wBtns[wdata.type]=wb
+
+    -- Check apakah ada di backpack
+    task.spawn(function()
+        task.wait(0.5)
+        local found = findWeaponByType(wdata.type)
+        if found then
+            wb.Text=wdata.icon.." "..wdata.type.."\n✔ "..found.Name
+            wb.TextColor3=Color3.fromRGB(200,200,200)
+        else
+            wb.Text=wdata.icon.." "..wdata.type.."\n✘ Không có"
+            wb.TextColor3=Color3.fromRGB(120,120,120)
+        end
+    end)
+
+    wb.MouseButton1Click:Connect(function()
+        local found = findWeaponByType(wdata.type)
+        if not found then
+            statusLbl.Text="❌ Không tìm thấy "..wdata.type.." trong Backpack!"
+            statusLbl.TextColor3=Color3.fromRGB(255,100,100)
+            return
+        end
+
+        -- Bỏ chọn màu cũ
+        for _, b in pairs(wBtns) do
+            b.BackgroundColor3=Color3.fromRGB(25,25,38)
+        end
+
+        targetType = wdata.type
+        wb.BackgroundColor3 = wdata.color
+        running = true
+        startLoop()
+
+        toggleBtn.Text="▶  Đang giữ: "..targetType
+        toggleBtn.BackgroundColor3=Color3.fromRGB(0,180,70)
+        toggleBtn.TextColor3=Color3.fromRGB(255,255,255)
+        statusLbl.Text="✅ Đã chọn: "..found.Name
+        statusLbl.TextColor3=Color3.fromRGB(140,255,140)
+    end)
+end
+
+-- Info label
+local infoLbl=Instance.new("TextLabel",panel)
+infoLbl.Size=UDim2.new(1,-12,0,18); infoLbl.Position=UDim2.new(0,6,0,214)
+infoLbl.BackgroundTransparency=1
+infoLbl.Text="Tự nhận dạng weapon qua tên tool"
+infoLbl.TextColor3=Color3.fromRGB(90,90,110); infoLbl.TextScaled=true
+infoLbl.Font=Enum.Font.Gotham
+
+-- Status updater
+task.spawn(function()
+    while not destroyed do
+        task.wait(0.8)
+        -- Cập nhật tên tool trong các nút
+        for _, wdata in ipairs(weaponTypes) do
+            local wb = wBtns[wdata.type]
+            if wb then
+                local found = findWeaponByType(wdata.type)
+                if found then
+                    wb.Text=wdata.icon.." "..wdata.type.."\n✔ "..found.Name
+                    if targetType ~= wdata.type then
+                        wb.TextColor3=Color3.fromRGB(200,200,200)
+                    end
+                else
+                    wb.Text=wdata.icon.." "..wdata.type.."\n✘ Không có"
+                    wb.TextColor3=Color3.fromRGB(120,120,120)
+                end
+            end
+        end
+
+        -- Cập nhật status chính
+        if running and targetType then
+            if isEquipped(targetType) then
+                local tool = LP.Character and LP.Character:FindFirstChildOfClass("Tool")
+                statusLbl.Text="✅ Đang cầm: "..(tool and tool.Name or targetType)
+                statusLbl.TextColor3=Color3.fromRGB(140,255,140)
+            else
+                statusLbl.Text="⚡ Đang tìm & trang bị "..targetType.."..."
+                statusLbl.TextColor3=Color3.fromRGB(255,220,60)
+            end
+        elseif not running and targetType then
+            statusLbl.Text="⏸ Tạm dừng - "..targetType
+            statusLbl.TextColor3=Color3.fromRGB(200,160,60)
+        end
+    end
+end)
+
+startLoop()
+print("[BF Weapon] Loaded! Tự nhận dạng Gun/Melee/Fruit/Sword")
